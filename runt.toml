@@ -117,12 +117,7 @@ fud exec -s verilog.data {}.data \
 name = "[frontend] systolic array correctness"
 paths = [ "tests/correctness/systolic/*.systolic" ]
 cmd = """
-fud e --from systolic --to vcd_json --through verilog \
-      {} \
-      -s verilog.data {}.data \
-      -s futil.exec './target/debug/futil' \
-      -q \
-      | jq -f {}.jq
+fud e --from systolic --to vcd_json --through verilog {} -s verilog.data {}.data -s futil.exec './target/debug/futil' -q | jq -f {}.jq
 
 """
 
