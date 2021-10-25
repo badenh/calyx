@@ -1,0 +1,12 @@
+ver = "0.3.2"
+
+[[tests]]
+name = "Correctness"
+paths = [ "polybench/**/*.fuse" ]
+cmd = """
+fud exec -s verilog.data {}.data \
+         --through icarus-verilog \
+         {} --to dat \
+         -q | jq .memories
+"""
+expect_dir = "simulation/"

@@ -127,6 +127,16 @@ fud e --from systolic --to vcd_json --through verilog \
 """
 
 [[tests]]
+name = "Correctness"
+paths = [ "benchmarks/polybench/**/*.fuse" ]
+cmd = """
+fud exec -s verilog.data {}.data \
+         --through icarus-verilog \
+         {} --to dat \
+         -q | jq .memories
+"""
+
+[[tests]]
 name = "[frontend] NTT pipeline correctness"
 paths = [ "tests/correctness/ntt-pipeline/*.txt" ]
 cmd = """
