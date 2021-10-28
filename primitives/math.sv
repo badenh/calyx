@@ -18,6 +18,10 @@ module fp_sqrt #(
     logic [WIDTH+1:0] tmp;
     logic start, running, finished;
 
+    initial begin
+      running = 0;
+    end
+
     assign start = go && !running;
     /* verilator lint_off WIDTH */
     assign finished = running && (idx == (ITERATIONS - 1));
