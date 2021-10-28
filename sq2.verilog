@@ -1,0 +1,413 @@
+module fp_sqrt #(
+    parameter WIDTH = 32,
+    parameter INT_WIDTH = 16,
+    parameter FRAC_WIDTH = 16
+) (
+    input  logic             clk,
+    input  logic             go,
+    input  logic [WIDTH-1:0] in,
+    output logic [WIDTH-1:0] out,
+    output logic             done
+);
+    localparam ITERATIONS = WIDTH+FRAC_WIDTH >> 1;
+    logic [$clog2(ITERATIONS)-1:0] idx;
+
+    logic [WIDTH-1:0] x, x_next;
+    logic [WIDTH-1:0] quotient, quotient_next;
+    logic [WIDTH+1:0] acc, acc_next;
+    logic [WIDTH+1:0] tmp;
+    logic start, running, finished;
+
+    logic s;
+    assign s = tmp[WIDTH+1];
+    logic [WIDTH-1:0] t;
+    assign t = acc[WIDTH-1:0];
+    logic [WIDTH-2:0] u;
+    assign u = quotient[WIDTH-2:0];
+    logic [WIDTH-1:0] v;
+    assign v = tmp[WIDTH-1:0];
+
+    assign start = go && !running;
+    /* verilator lint_off WIDTH */
+    assign finished = running && (idx == (ITERATIONS - 1));
+
+    always_comb begin
+      tmp = acc - {quotient, 2'b01};
+      if (s) begin
+        // tmp is negative.
+        {acc_next, x_next} = {t, x, 2'b0};
+        // Append a 0 to the result.
+        quotient_next = quotient << 1;
+      end else begin
+        // tmp is positive.
+        {acc_next, x_next} = {v, x, 2'b0};
+        // Append a 1 to the result.
+        quotient_next = {u, 1'b1};
+      end
+    end
+
+    // Current idx value
+    always_ff @(posedge clk) begin
+      if (start || !running)
+        idx <= 0;
+      else
+        idx <= idx + 1;
+    end
+
+    always_ff @(posedge clk) begin
+      if (start) begin
+        running <= 1;
+        quotient <= 0;
+        {acc, x} <= {{WIDTH{1'b0}}, in, 2'b0};
+      end else if (finished) begin
+        running <= 0;
+      end else begin
+        x <= x_next;
+        acc <= acc_next;
+        quotient <= quotient_next;
+      end
+    end
+
+    // Done condition.
+    always_ff @(posedge clk) begin
+      if (idx == ITERATIONS - 1) begin
+        done <= 1;
+      end else begin
+        done <= 0;
+      end
+    end
+
+    // Latch for final value.
+    always_ff @(posedge clk) begin
+      if (idx == ITERATIONS-1) begin
+        out <= quotient_next;
+      end else begin
+        out <= out;
+      end
+    end
+
+endmodule
+
+module sqrt #(
+    parameter WIDTH = 32
+) (
+    input  logic             clk,
+    input  logic             go,
+    input  logic [WIDTH-1:0] in,
+    output logic [WIDTH-1:0] out,
+    output logic             done
+);
+  fp_sqrt #(
+    .WIDTH(WIDTH),
+    .INT_WIDTH(WIDTH),
+    .FRAC_WIDTH(0)
+  ) comp (
+    .clk(clk),
+    .done(done),
+    .go(go),
+    .in(in),
+    .out(out)
+  );
+
+  // Simulation self test against unsynthesizable implementation.
+  `ifdef VERILATOR
+    logic [WIDTH-1:0] inp_save;
+
+    always_latch @(posedge clk) begin
+      if (go)
+        inp_save <= in;
+    end
+
+    always @(posedge clk) begin
+      if (done && out != $floor($sqrt(inp_save)))
+        $error(
+          "\nsqrt: Computed and golden outputs do not match!\n",
+          "input: %0d\n", inp_save,
+          /* verilator lint_off REALCVT */
+          "expected: %0d\n", $floor($sqrt(inp_save)),
+          "computed: %0d", out
+        );
+    end
+  `endif
+endmodule
+
+module std_const #(
+    parameter WIDTH = 32,
+    parameter VALUE = 0
+) (
+   output logic [WIDTH - 1:0] out
+);
+  assign out = VALUE;
+endmodule
+
+/// Memories
+module std_reg #(
+    parameter WIDTH = 32
+) (
+   input wire [ WIDTH-1:0]    in,
+   input wire                 write_en,
+   input wire                 clk,
+   input wire                 reset,
+    // output
+   output logic [WIDTH - 1:0] out,
+   output logic               done
+);
+
+  always_ff @(posedge clk) begin
+    if (reset) begin
+       out <= 0;
+       done <= 0;
+    end else if (write_en) begin
+      out <= in;
+      done <= 1'd1;
+    end else done <= 1'd0;
+  end
+endmodule
+
+module std_mem_d1 #(
+    parameter WIDTH = 32,
+    parameter SIZE = 16,
+    parameter IDX_SIZE = 4
+) (
+   input wire                logic [IDX_SIZE-1:0] addr0,
+   input wire                logic [ WIDTH-1:0] write_data,
+   input wire                logic write_en,
+   input wire                logic clk,
+   output logic [ WIDTH-1:0] read_data,
+   output logic              done
+);
+
+  logic [WIDTH-1:0] mem[SIZE-1:0];
+
+  /* verilator lint_off WIDTH */
+  assign read_data = mem[addr0];
+  always_ff @(posedge clk) begin
+    if (write_en) begin
+      mem[addr0] <= write_data;
+      done <= 1'd1;
+    end else done <= 1'd0;
+  end
+endmodule
+
+module std_mem_d2 #(
+    parameter WIDTH = 32,
+    parameter D0_SIZE = 16,
+    parameter D1_SIZE = 16,
+    parameter D0_IDX_SIZE = 4,
+    parameter D1_IDX_SIZE = 4
+) (
+   input wire                logic [D0_IDX_SIZE-1:0] addr0,
+   input wire                logic [D1_IDX_SIZE-1:0] addr1,
+   input wire                logic [ WIDTH-1:0] write_data,
+   input wire                logic write_en,
+   input wire                logic clk,
+   output logic [ WIDTH-1:0] read_data,
+   output logic              done
+);
+
+  /* verilator lint_off WIDTH */
+  logic [WIDTH-1:0] mem[D0_SIZE-1:0][D1_SIZE-1:0];
+
+  assign read_data = mem[addr0][addr1];
+  always_ff @(posedge clk) begin
+    if (write_en) begin
+      mem[addr0][addr1] <= write_data;
+      done <= 1'd1;
+    end else done <= 1'd0;
+  end
+endmodule
+
+module std_mem_d3 #(
+    parameter WIDTH = 32,
+    parameter D0_SIZE = 16,
+    parameter D1_SIZE = 16,
+    parameter D2_SIZE = 16,
+    parameter D0_IDX_SIZE = 4,
+    parameter D1_IDX_SIZE = 4,
+    parameter D2_IDX_SIZE = 4
+) (
+   input wire                logic [D0_IDX_SIZE-1:0] addr0,
+   input wire                logic [D1_IDX_SIZE-1:0] addr1,
+   input wire                logic [D2_IDX_SIZE-1:0] addr2,
+   input wire                logic [ WIDTH-1:0] write_data,
+   input wire                logic write_en,
+   input wire                logic clk,
+   output logic [ WIDTH-1:0] read_data,
+   output logic              done
+);
+
+  /* verilator lint_off WIDTH */
+  logic [WIDTH-1:0] mem[D0_SIZE-1:0][D1_SIZE-1:0][D2_SIZE-1:0];
+
+  assign read_data = mem[addr0][addr1][addr2];
+  always_ff @(posedge clk) begin
+    if (write_en) begin
+      mem[addr0][addr1][addr2] <= write_data;
+      done <= 1'd1;
+    end else done <= 1'd0;
+  end
+endmodule
+
+module std_mem_d4 #(
+    parameter WIDTH = 32,
+    parameter D0_SIZE = 16,
+    parameter D1_SIZE = 16,
+    parameter D2_SIZE = 16,
+    parameter D3_SIZE = 16,
+    parameter D0_IDX_SIZE = 4,
+    parameter D1_IDX_SIZE = 4,
+    parameter D2_IDX_SIZE = 4,
+    parameter D3_IDX_SIZE = 4
+) (
+   input wire                logic [D0_IDX_SIZE-1:0] addr0,
+   input wire                logic [D1_IDX_SIZE-1:0] addr1,
+   input wire                logic [D2_IDX_SIZE-1:0] addr2,
+   input wire                logic [D3_IDX_SIZE-1:0] addr3,
+   input wire                logic [ WIDTH-1:0] write_data,
+   input wire                logic write_en,
+   input wire                logic clk,
+   output logic [ WIDTH-1:0] read_data,
+   output logic              done
+);
+
+  /* verilator lint_off WIDTH */
+  logic [WIDTH-1:0] mem[D0_SIZE-1:0][D1_SIZE-1:0][D2_SIZE-1:0][D3_SIZE-1:0];
+
+  assign read_data = mem[addr0][addr1][addr2][addr3];
+  always_ff @(posedge clk) begin
+    if (write_en) begin
+      mem[addr0][addr1][addr2][addr3] <= write_data;
+      done <= 1'd1;
+    end else done <= 1'd0;
+  end
+endmodule
+
+`default_nettype wire
+module main (
+    input logic go,
+    input logic clk,
+    input logic reset,
+    output logic done
+);
+    string DATA;
+    initial begin
+        $value$plusargs("DATA=%s", DATA);
+        $display("DATA (path to meminit files): %s", DATA);
+        $readmemh({DATA, "/A0.dat"}, A0.mem);
+    end
+    final begin
+        $writememh({DATA, "/A0.out"}, A0.mem);
+    end
+    logic A0_addr0;
+    logic [31:0] A0_write_data;
+    logic A0_write_en;
+    logic A0_clk;
+    logic [31:0] A0_read_data;
+    logic A0_done;
+    logic [31:0] const0_out;
+    logic const1_out;
+    logic [31:0] sq_0_in;
+    logic sq_0_write_en;
+    logic sq_0_clk;
+    logic sq_0_reset;
+    logic [31:0] sq_0_out;
+    logic sq_0_done;
+    logic sqrt0_clk;
+    logic sqrt0_go;
+    logic [31:0] sqrt0_in;
+    logic [31:0] sqrt0_out;
+    logic sqrt0_done;
+    logic [1:0] fsm_in;
+    logic fsm_write_en;
+    logic fsm_clk;
+    logic fsm_reset;
+    logic [1:0] fsm_out;
+    logic fsm_done;
+    std_mem_d1 # (
+        .IDX_SIZE(1),
+        .SIZE(1),
+        .WIDTH(32)
+    ) A0 (
+        .addr0(A0_addr0),
+        .clk(A0_clk),
+        .done(A0_done),
+        .read_data(A0_read_data),
+        .write_data(A0_write_data),
+        .write_en(A0_write_en)
+    );
+    std_const # (
+        .VALUE(16),
+        .WIDTH(32)
+    ) const0 (
+        .out(const0_out)
+    );
+    std_const # (
+        .VALUE(0),
+        .WIDTH(1)
+    ) const1 (
+        .out(const1_out)
+    );
+    std_reg # (
+        .WIDTH(32)
+    ) sq_0 (
+        .clk(sq_0_clk),
+        .done(sq_0_done),
+        .in(sq_0_in),
+        .out(sq_0_out),
+        .reset(sq_0_reset),
+        .write_en(sq_0_write_en)
+    );
+    sqrt # (
+        .WIDTH(32)
+    ) sqrt0 (
+        .clk(sqrt0_clk),
+        .done(sqrt0_done),
+        .go(sqrt0_go),
+        .in(sqrt0_in),
+        .out(sqrt0_out)
+    );
+    std_reg # (
+        .WIDTH(2)
+    ) fsm (
+        .clk(fsm_clk),
+        .done(fsm_done),
+        .in(fsm_in),
+        .out(fsm_out),
+        .reset(fsm_reset),
+        .write_en(fsm_write_en)
+    );
+    assign A0_addr0 =
+     sq_0_done & fsm_out == 2'd1 & go | ~A0_done & fsm_out == 2'd2 & go ? const1_out : 1'd0;
+    assign A0_clk =
+     1'b1 ? clk : 1'd0;
+    assign A0_write_data =
+     sq_0_done & fsm_out == 2'd1 & go | ~A0_done & fsm_out == 2'd2 & go ? sq_0_out : 32'd0;
+    assign A0_write_en =
+     sq_0_done & fsm_out == 2'd1 & go | ~A0_done & fsm_out == 2'd2 & go ? 1'd1 : 1'd0;
+    assign done =
+     fsm_out == 2'd3 ? 1'd1 : 1'd0;
+    assign fsm_clk =
+     1'b1 ? clk : 1'd0;
+    assign fsm_in =
+     fsm_out == 2'd3 ? 2'd0 :
+     fsm_out == 2'd0 & sqrt0_done & go ? 2'd1 :
+     fsm_out == 2'd1 & sq_0_done & go ? 2'd2 :
+     fsm_out == 2'd2 & A0_done & go ? 2'd3 : 2'd0;
+    assign fsm_reset =
+     1'b1 ? reset : 1'd0;
+    assign fsm_write_en =
+     fsm_out == 2'd0 & sqrt0_done & go | fsm_out == 2'd1 & sq_0_done & go | fsm_out == 2'd2 & A0_done & go | fsm_out == 2'd3 ? 1'd1 : 1'd0;
+    assign sq_0_clk =
+     1'b1 ? clk : 1'd0;
+    assign sq_0_in =
+     sqrt0_done & fsm_out == 2'd0 & go | ~sq_0_done & fsm_out == 2'd1 & go ? sqrt0_out : 32'd0;
+    assign sq_0_write_en =
+     sqrt0_done & fsm_out == 2'd0 & go | ~sq_0_done & fsm_out == 2'd1 & go ? 1'd1 : 1'd0;
+    assign sqrt0_clk =
+     1'b1 ? clk : 1'd0;
+    assign sqrt0_go =
+     ~sqrt0_done & fsm_out == 2'd0 & go ? 1'd1 : 1'd0;
+    assign sqrt0_in =
+     ~sqrt0_done & fsm_out == 2'd0 & go ? const0_out : 32'd0;
+    
+endmodule
